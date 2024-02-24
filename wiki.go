@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,12 +13,17 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	// "github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
 var client *redis.Client
 
 func init() {
+	// err := godotenv.Load()
+	// if err != nil {
+	// 	log.Fatalf("Error loading .env file: %v", err)
+	// }
 	redisHostname := os.Getenv("REDIS_HOSTNAME")
 	redisPort := os.Getenv("REDIS_PORT")
 	redisPassword := os.Getenv("REDIS_PASSWORD")
@@ -83,29 +89,103 @@ func corsMiddleware() gin.HandlerFunc {
 
 func getUserData(c *gin.Context) {
 	sub := c.Param("sub")
+	if sub == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Sub parameter is required"})
+		return
+	}
+
 	userData, err := getUserDataFromRedis(sub)
 	if err != nil {
 		log.Printf("Error getting user data from Redis for sub %s: %v", sub, err)
-		if err == redis.Nil {
-			// Data not found in Redis, fetch from API and store in Redis
-			userData, err = fetchUserDataFromAPI(sub)
-			if err != nil {
-				log.Printf("Error fetching user data from API for sub %s: %v", sub, err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
-				return
-			}
-			// Store the fetched data in Redis
-			if err := storeUserDataInRedis(userData); err != nil {
-				log.Printf("Error storing user data in Redis for sub %s: %v", sub, err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store user data"})
-				return
-			}
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data from Redis"})
+		response, err := fetchUserDataFromAPI(sub)
+		if err != nil {
+			log.Printf("Error fetching user data from API for sub %s: %v", sub, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
 			return
 		}
+		apiUserData := response
+
+		// Store fetched user data in Redis
+		redisKey := fmt.Sprintf("user:%s", sub)
+		err = client.HMSet(context.Background(), redisKey, map[string]interface{}{
+			"sub":      apiUserData.Sub,
+			"image":    apiUserData.Image,
+			"nickname": apiUserData.Nickname,
+			"name":     apiUserData.Name,
+			"score":    apiUserData.Score,
+		}).Err()
+
+		if err != nil {
+			log.Printf("Error saving user data to Redis for sub %s: %v", sub, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save user data"})
+			return
+		}
+
+		// Update the userData variable with fetched data
+		userData = apiUserData
 	}
+
+	// Return user data
 	c.JSON(http.StatusOK, userData)
+}
+
+func getUserDataFromRedis(sub string) (UserData, error) {
+	ctx := context.Background() // Create a background context
+	redisKey := fmt.Sprintf("user:%s", sub)
+	vals, err := client.HGetAll(ctx, redisKey).Result()
+	if err != nil {
+		return UserData{}, err
+	}
+
+	scoreStr, ok := vals["score"]
+	if !ok {
+		return UserData{}, fmt.Errorf("score not found for user with sub: %s", sub)
+	}
+
+	score, err := strconv.Atoi(scoreStr)
+	if err != nil {
+		return UserData{}, fmt.Errorf("failed to convert score to integer for user with sub: %s", sub)
+	}
+
+	userData := UserData{
+		Sub:      vals["sub"],
+		Image:    vals["image"],
+		Nickname: vals["nickname"],
+		Name:     vals["name"],
+		Score:    score,
+	}
+	return userData, nil
+}
+
+func fetchUserDataFromAPI(sub string) (UserData, error) {
+	url := fmt.Sprintf("https://dev-w6w73v6food6memp.us.auth0.com/api/v2/users/%s", sub)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return UserData{}, err
+	}
+	req.Header.Add("Authorization", "Bearer "+os.Getenv("TOKEN")) // Replace with your actual access token
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return UserData{}, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return UserData{}, fmt.Errorf("failed to fetch user data: %s", res.Status)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return UserData{}, err
+	}
+
+	var userData UserData
+	if err := json.Unmarshal(body, &userData); err != nil {
+		return UserData{}, err
+	}
+
+	return userData, nil
 }
 
 func storeUserDataInRedis(userData UserData) error {
@@ -228,57 +308,4 @@ func incrementScore(c *gin.Context) {
 		UserData: userData,
 	}
 	c.JSON(http.StatusOK, response)
-}
-func fetchUserDataFromAPI(sub string) (UserData, error) {
-	url := fmt.Sprintf("https://dev-w6w73v6food6memp.us.auth0.com/api/v2/users/%s", sub)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return UserData{}, err
-	}
-	req.Header.Add("Authorization", "Bearer "+os.Getenv("TOKEN"))
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return UserData{}, err
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return UserData{}, fmt.Errorf("failed to fetch user data: %s", res.Status)
-	}
-
-	var userData UserData
-	if err := json.NewDecoder(res.Body).Decode(&userData); err != nil {
-		return UserData{}, err
-	}
-
-	return userData, nil
-}
-
-func getUserDataFromRedis(sub string) (UserData, error) {
-	ctx := context.Background() // Create a background context
-	redisKey := fmt.Sprintf("user:%s", sub)
-	vals, err := client.HGetAll(ctx, redisKey).Result()
-	if err != nil {
-		return UserData{}, err
-	}
-
-	scoreStr, ok := vals["score"]
-	if !ok {
-		return UserData{}, fmt.Errorf("score not found for user with sub: %s", sub)
-	}
-
-	score, err := strconv.Atoi(scoreStr)
-	if err != nil {
-		return UserData{}, fmt.Errorf("failed to convert score to integer for user with sub: %s", sub)
-	}
-
-	userData := UserData{
-		Sub:      vals["sub"],
-		Image:    vals["image"],
-		Nickname: vals["nickname"],
-		Name:     vals["name"],
-		Score:    score,
-	}
-	return userData, nil
 }
