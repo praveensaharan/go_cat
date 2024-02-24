@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
@@ -111,6 +112,11 @@ func main() {
 		port = "3000"
 	}
 
+	router := gin.Default()
+
+	if err := router.Run(":" + port); err != nil {
+		log.Fatalf("Failed to start the server: %v", err)
+	}
 	// Handle CORS
 	corsHandler := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
