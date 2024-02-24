@@ -36,8 +36,8 @@ func init() {
 }
 
 type UserData struct {
-	Sub      string `json:"sub"`
-	Image    string `json:"image"`
+	Sub      string `json:"user_id"`
+	Image    string `json:"picture"`
 	Nickname string `json:"nickname"`
 	Name     string `json:"name"`
 	Score    int    `json:"score"`
