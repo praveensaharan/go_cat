@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -195,6 +196,31 @@ func incrementScore(c *gin.Context) {
 		UserData: userData,
 	}
 	c.JSON(http.StatusOK, response)
+}
+func fetchUserDataFromAPI(sub string) (UserData, error) {
+	url := fmt.Sprintf("https://dev-w6w73v6food6memp.us.auth0.com/api/v2/users/%s", sub)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return UserData{}, err
+	}
+	req.Header.Add("Authorization", "Bearer "+os.Getenv("TOKEN"))
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return UserData{}, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return UserData{}, fmt.Errorf("failed to fetch user data: %s", res.Status)
+	}
+
+	var userData UserData
+	if err := json.NewDecoder(res.Body).Decode(&userData); err != nil {
+		return UserData{}, err
+	}
+
+	return userData, nil
 }
 
 func getUserDataFromRedis(sub string) (UserData, error) {
