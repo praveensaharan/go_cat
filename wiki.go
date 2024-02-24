@@ -86,10 +86,42 @@ func getUserData(c *gin.Context) {
 	userData, err := getUserDataFromRedis(sub)
 	if err != nil {
 		log.Printf("Error getting user data from Redis for sub %s: %v", sub, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
-		return
+		if err == redis.Nil {
+			// Data not found in Redis, fetch from API and store in Redis
+			userData, err = fetchUserDataFromAPI(sub)
+			if err != nil {
+				log.Printf("Error fetching user data from API for sub %s: %v", sub, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
+				return
+			}
+			// Store the fetched data in Redis
+			if err := storeUserDataInRedis(userData); err != nil {
+				log.Printf("Error storing user data in Redis for sub %s: %v", sub, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store user data"})
+				return
+			}
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data from Redis"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, userData)
+}
+
+func storeUserDataInRedis(userData UserData) error {
+	ctx := context.Background() // Create a background context
+	redisKey := fmt.Sprintf("user:%s", userData.Sub)
+	_, err := client.HMSet(ctx, redisKey, map[string]interface{}{
+		"sub":      userData.Sub,
+		"image":    userData.Image,
+		"nickname": userData.Nickname,
+		"name":     userData.Name,
+		"score":    userData.Score,
+	}).Result()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func getUsers(c *gin.Context) {
