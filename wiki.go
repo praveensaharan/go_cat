@@ -7,52 +7,30 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/spf13/viper"
 )
 
 var client *redis.Client
 
-func viperEnvVariable(key string) string {
-
-	viper.SetConfigFile(".env")
-
-	err := viper.ReadInConfig()
-
-	if err != nil {
-		log.Fatalf("Error while reading config file %s", err)
-	}
-
-	value, ok := viper.Get(key).(string)
-
-	if !ok {
-		log.Fatalf("Invalid type assertion")
-	}
-
-	return value
-}
-
 func init() {
-	redisHostname := viperEnvVariable("REDIS_HOSTNAME")
-	redisPort := viperEnvVariable("REDIS_PORT")
-	redisPassword := viperEnvVariable("REDIS_PASSWORD")
+	redisHostname := os.Getenv("REDIS_HOSTNAME")
+	redisPort := os.Getenv("REDIS_PORT")
+	redisPassword := os.Getenv("REDIS_PASSWORD")
 
-	// Print environment variables
-	fmt.Println("Redis Hostname:", redisHostname)
-	fmt.Println("Redis Port:", redisPort)
-	fmt.Println("Redis Password:", redisPassword)
 	client = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", viperEnvVariable("REDIS_HOSTNAME"), viperEnvVariable("REDIS_PORT")),
-		Password: viperEnvVariable("REDIS_PASSWORD"),
+		Addr:     fmt.Sprintf("%s:%s", redisHostname, redisPort),
+		Password: redisPassword,
 	})
 
 	// Ping Redis to check the connection
-	pong, err := client.Ping(context.Background()).Result()
+	ctx := context.Background()
+	pong, err := client.Ping(ctx).Result()
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
@@ -101,7 +79,7 @@ func fetchUserDataFromAPI(sub string) (UserData, error) {
 	if err != nil {
 		return UserData{}, err
 	}
-	req.Header.Add("Authorization", "Bearer "+viperEnvVariable("TOKEN")) // Replace with your actual access token
+	req.Header.Add("Authorization", "Bearer "+os.Getenv("TOKEN")) // Replace with your actual access token
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -127,7 +105,7 @@ func fetchUserDataFromAPI(sub string) (UserData, error) {
 }
 
 func main() {
-	port := viperEnvVariable("PORT")
+	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3000"
 	}
