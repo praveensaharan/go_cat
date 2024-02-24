@@ -7,28 +7,48 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
+	"github.com/spf13/viper"
 )
 
 var client *redis.Client
 
-func init() {
-	// Load environment variables from .env file
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env file")
+func viperEnvVariable(key string) string {
+
+	viper.SetConfigFile(".env")
+
+	err := viper.ReadInConfig()
+
+	if err != nil {
+		log.Fatalf("Error while reading config file %s", err)
 	}
 
-	// Create Redis client
+	value, ok := viper.Get(key).(string)
+
+	if !ok {
+		log.Fatalf("Invalid type assertion")
+	}
+
+	return value
+}
+
+func init() {
+	redisHostname := viperEnvVariable("REDIS_HOSTNAME")
+	redisPort := viperEnvVariable("REDIS_PORT")
+	redisPassword := viperEnvVariable("REDIS_PASSWORD")
+
+	// Print environment variables
+	fmt.Println("Redis Hostname:", redisHostname)
+	fmt.Println("Redis Port:", redisPort)
+	fmt.Println("Redis Password:", redisPassword)
 	client = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", os.Getenv("REDIS_HOSTNAME"), os.Getenv("REDIS_PORT")),
-		Password: os.Getenv("REDIS_PASSWORD"),
+		Addr:     fmt.Sprintf("%s:%s", viperEnvVariable("REDIS_HOSTNAME"), viperEnvVariable("REDIS_PORT")),
+		Password: viperEnvVariable("REDIS_PASSWORD"),
 	})
 
 	// Ping Redis to check the connection
@@ -81,7 +101,7 @@ func fetchUserDataFromAPI(sub string) (UserData, error) {
 	if err != nil {
 		return UserData{}, err
 	}
-	req.Header.Add("Authorization", "Bearer "+os.Getenv("TOKEN")) // Replace with your actual access token
+	req.Header.Add("Authorization", "Bearer "+viperEnvVariable("TOKEN")) // Replace with your actual access token
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -107,7 +127,7 @@ func fetchUserDataFromAPI(sub string) (UserData, error) {
 }
 
 func main() {
-	port := os.Getenv("PORT")
+	port := viperEnvVariable("PORT")
 	if port == "" {
 		port = "3000"
 	}
